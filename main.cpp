@@ -319,7 +319,6 @@ void resetEnemy(int i) {
     float spawnY = 1.1f + i * 0.65f;   // stagger so they don't all appear at once
 
     // Lane-overlap fix: pick a lane not already taken by another enemy
-    // at a nearby height, so we never spawn an impossible wall.
     int lane;
     bool laneOk;
     int attempts = 0;
@@ -394,12 +393,11 @@ void updateGame(int value) {
             if (enemies[i].active) {
                 float newY = enemies[i].y - enemies[i].speed;
 
-                // Anti-overlap: never move into another enemy ahead in the
-                // same lane. If we'd get too close, follow it at a safe gap.
+                // Anti-overlap: never move into another enemy ahead in the same lane
                 for (int j = 0; j < MAX_ENEMIES; j++) {
                     if (j != i && enemies[j].active &&
                         enemies[j].x == enemies[i].x &&
-                        enemies[j].y < enemies[i].y) {   // j is ahead (lower down)
+                        enemies[j].y < enemies[i].y) {
                         float minGap = (enemies[i].height + enemies[j].height) / 2.0f + 0.05f;
                         if (newY - enemies[j].y < minGap) {
                             newY = enemies[j].y + minGap;
