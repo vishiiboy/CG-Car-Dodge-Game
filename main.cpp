@@ -26,7 +26,7 @@ struct Enemy {
     float x, y;
     float width, height;
     float speed;
-    int type;       // 0 = car, 1 = truck, 2 = rotating hazard sign
+    int type;       // 0 = car, 1 = truck, 2 = pothole hazard
     float angle;    // current rotation angle (used by hazard type)
     bool active;
 };
@@ -45,6 +45,9 @@ bool gameOver = false;
 bool gameStarted = false;
 float laneLineOffset = 0.0f;
 const float ROAD_SPEED = 0.02f;   // speed the road scrolls down; potholes match this
+
+// --- MEMBER 4: Visual feedback variables ------------------------------------
+float potholeFlashTimer = 0.0f;   // For yellow flash when hitting pothole
 
 void drawText(float x, float y, const std::string& text) {
     glRasterPos2f(x, y);
@@ -367,18 +370,30 @@ void initEnemies() {
     }
 }
 
-// --- MEMBER 4: Collision detection ------------------------------------------
-bool checkCollision() {
+// --- MEMBER 4: Collision detection (Cars/Trucks = Game Over, Potholes = Penalty) ---
+// Returns: 0 = no collision, 1 = fatal (car/truck), 2 = pothole (penalty)
+int checkCollisionType() {
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (enemies[i].active &&
             playerX - playerWidth / 2  < enemies[i].x + enemies[i].width / 2 &&
             playerX + playerWidth / 2  > enemies[i].x - enemies[i].width / 2 &&
             playerY - playerHeight / 2 < enemies[i].y + enemies[i].height / 2 &&
             playerY + playerHeight / 2 > enemies[i].y - enemies[i].height / 2) {
-            return true;
+            
+            // Different response based on enemy type
+            if (enemies[i].type == 2) {
+                return 2;  // Pothole - penalty only
+            } else {
+                return 1;  // Car or Truck - game over
+            }
         }
     }
-    return false;
+    return 0;  // No collision
+}
+
+// Original function name kept for compatibility with other code
+bool checkCollision() {
+    return (checkCollisionType() == 1);
 }
 // ----------------------------------------------------------------------------
 
@@ -422,27 +437,61 @@ void updateGame(int value) {
                     if (enemies[i].angle >= 360.0f) enemies[i].angle -= 360.0f;
                 }
 
+                // SCORE UPDATE - When enemy goes off screen (bottom)
                 if (enemies[i].y < -1.1f) {
-                    score++;
-
-                    // --- MEMBER 5: Level Progression Logic ---
-                    if (score >= nextLevelScore) {
-                        level++;
-                        nextLevelScore += 5; 
+                    // Only add score for cars and trucks (type 0 and 1), not potholes
+                    if (enemies[i].type != 2) {
+                        score++;
+                        
+                        // Level progression
+                        if (score >= nextLevelScore) {
+                            level++;
+                            nextLevelScore += 5;
+                        }
+                        
+                        // Increase speed based on level
+                        for (int j = 0; j < MAX_ENEMIES; j++) {
+                            if (enemies[j].type != 2) {
+                                enemies[j].speed += (0.0005f * level);
+                            }
+                        }
                     }
-                    // -----------------------------------------
-
+                    
                     resetEnemy(i);
-                    for (int j = 0; j < MAX_ENEMIES; j++) {
-                        // Level eka anuwa speed eka wadi wena eka
-                        if (enemies[j].type != 2) enemies[j].speed += (0.0005f * level);
-                    }
                 }
             }
         }
 
-        if (checkCollision()) {
+        // --- MEMBER 4: Handle different collision types ---
+        int collisionResult = checkCollisionType();
+        if (collisionResult == 1) {
+            // Car or truck - Game Over
             gameOver = true;
+        }
+        else if (collisionResult == 2) {
+            // Pothole - Deduct points but continue game
+            score = (score >= 10) ? score - 10 : 0;
+            
+            // Trigger visual feedback (yellow flash)
+            potholeFlashTimer = 8.0f;
+            
+            // Deactivate the pothole that was hit
+            for (int i = 0; i < MAX_ENEMIES; i++) {
+                if (enemies[i].active && enemies[i].type == 2) {
+                    if (playerX - playerWidth/2 < enemies[i].x + enemies[i].width/2 &&
+                        playerX + playerWidth/2 > enemies[i].x - enemies[i].width/2 &&
+                        playerY - playerHeight/2 < enemies[i].y + enemies[i].height/2 &&
+                        playerY + playerHeight/2 > enemies[i].y - enemies[i].height/2) {
+                        enemies[i].active = false;  // Remove pothole after hit
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Update pothole flash timer
+        if (potholeFlashTimer > 0) {
+            potholeFlashTimer -= 1.0f;
         }
     }
 
@@ -468,6 +517,16 @@ void display() {
         }
     }
 
+    // --- MEMBER 4: Pothole Flash Effect (Yellow flash when hitting pothole) ---
+    if (potholeFlashTimer > 0) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        float alpha = potholeFlashTimer / 8.0f * 0.4f;
+        glColor4f(1.0f, 1.0f, 0.0f, alpha);  // Yellow flash
+        drawRectangle(0.0f, 0.0f, 2.0f, 2.0f);
+        glDisable(GL_BLEND);
+    }
+
     // --- MEMBER 5: Polished UI Panel -----------------------------------
     glColor3f(0.1f, 0.1f, 0.1f);
     drawRectangle(-0.82f, 0.85f, 0.35f, 0.20f);
@@ -481,6 +540,11 @@ void display() {
     std::stringstream ssLevel;
     ssLevel << "Level: " << level;
     drawText(-0.95f, 0.80f, ssLevel.str());
+    
+    // --- MEMBER 4: Add collision info to UI ---
+    glColor3f(0.7f, 0.7f, 0.7f);
+    drawText(-0.95f, 0.71f, "Avoid RED cars & trucks");
+    drawText(-0.95f, 0.63f, "Potholes = -10 points");
     // -------------------------------------------------------------------
 
     if (gameOver) {
@@ -505,7 +569,7 @@ void display() {
 }
 
 void keyboard(unsigned char key, int x, int y) {
-    if (key == 13) {
+    if (key == 13) {  // ENTER key
         gameStarted = true;
         glutPostRedisplay();
         return;
@@ -525,7 +589,10 @@ void keyboard(unsigned char key, int x, int y) {
         
         // --- MEMBER 5: Level reset on restart ---
         level = 1;              
-        nextLevelScore = 5;     
+        nextLevelScore = 5;
+        
+        // --- MEMBER 4: Reset flash timer ---
+        potholeFlashTimer = 0.0f;
         // ----------------------------------------
         
         gameStarted = true;
@@ -533,7 +600,7 @@ void keyboard(unsigned char key, int x, int y) {
         initEnemies();
     }
 
-    if (key == 27) {
+    if (key == 27) {  // ESC key
         exit(0);
     }
 
@@ -588,6 +655,8 @@ void specialKeysUp(int key, int x, int y) {
 
 void init() {
     glClearColor(0.0f, 0.45f, 0.0f, 1.0f);
+    glEnable(GL_BLEND);  // Enable transparency for flash effects
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     srand(time(0));
     resetPlayer();
     initEnemies();
@@ -598,7 +667,7 @@ int main(int argc, char** argv) {
     glutInitDisplayMode(GLUT_SINGLE | GLUT_RGB);
     glutInitWindowSize(600, 700);
     glutInitWindowPosition(100, 100);
-    glutCreateWindow("Car Dodge Game");
+    glutCreateWindow("Car Dodge Game - Member 4 Collision Detection");
 
     init();
 
